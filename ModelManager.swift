@@ -130,27 +130,41 @@ open class ModelManager: NSObject {
 
     private var backgroundContexts = NSHashTable<NSManagedObjectContext>.weakObjects()
 
+    let backgroundContextsAccessQueue = DispatchQueue(label: "de.johannesdoerr.CoreDataModelManager.queue-\(UUID().uuidString)")
+    
     open func newBackgroundContext() -> NSManagedObjectContext {
         let context = persistentContainer.newBackgroundContext()
-        backgroundContexts.add(context)
+        backgroundContextsAccessQueue.sync {
+            backgroundContexts.add(context)
+        }
 //        print("added context (\(self.backgroundContexts.count))")
         return context
     }
 
     open func performBackgroundTask(_ block: @escaping (NSManagedObjectContext) -> Void) {
         persistentContainer.performBackgroundTask { context in
-            DispatchQueue.main.sync {
+            self.backgroundContextsAccessQueue.sync {
                 self.backgroundContexts.add(context)
-//                print("added context (\(self.backgroundContexts.count))")
             }
             block(context)
         }
     }
 
     open func mergeChangesToTopLevelContexts(fromRemoteContextSave changeNotificationData: [AnyHashable: Any]) {
-        let topLevelContexts = backgroundContexts.allObjects + [viewContext]
+        let topLevelContexts = self.backgroundContextsAccessQueue.sync {
+            return backgroundContexts.allObjects + [viewContext]
+        }
         let mergingContexts = topLevelContexts.filter { $0.automaticallyMergesChangesFromParent }
         NSManagedObjectContext.mergeChanges(fromRemoteContextSave: changeNotificationData, into: mergingContexts)
+    }
+    
+    open func performBatchDeleteAndMergeChangesToTopLevelContexts(fetchRequest: NSFetchRequest<NSFetchRequestResult>, inContext context: NSManagedObjectContext) throws {
+        let batchDeleteRequest = NSBatchDeleteRequest(fetchRequest: fetchRequest)
+        batchDeleteRequest.resultType = .resultTypeObjectIDs
+        let result = try context.execute(batchDeleteRequest) as? NSBatchDeleteResult
+        let objectIDArray = result?.result as? [NSManagedObjectID]
+        let changes = [NSDeletedObjectsKey: objectIDArray as Any]
+        mergeChangesToTopLevelContexts(fromRemoteContextSave: changes)
     }
 
     open func managedObjectID(forURIRepresentation url: URL) -> NSManagedObjectID? {
