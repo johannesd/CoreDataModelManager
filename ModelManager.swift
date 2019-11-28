@@ -66,6 +66,14 @@ open class ModelManager: NSObject {
     }
 
     /**
+     Returns true if changes will be synced to another process
+     */
+    public var isSyncingToRemoteProcesses: Bool {
+        guard let interProcessSync = self.interProcessSync else { return false }
+        return interProcessSync.remoteKeys.first { interProcessSync.store.bool(forKey: $0) } != nil
+    }
+    
+    /**
      The keys in store that this process will send data to
      */
     var activeOutboundKeys: [String] {
